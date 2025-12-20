@@ -31,7 +31,30 @@ export class Utils {
     }
 
     static sanitizeFilename(url: string): string {
-        // Basic sanitization, can be improved
-        return url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9.\-_]/g, '_').substring(0, 200);
+        try {
+            const parsedUrl = new URL(url);
+            // Get the pathname and remove leading/trailing slashes
+            let pathname = parsedUrl.pathname.replace(/^\/+|\/+$/g, '');
+
+            // If pathname is empty (e.g., homepage), use 'index'
+            if (!pathname) {
+                pathname = 'index';
+            }
+
+            // Replace slashes with hyphens
+            pathname = pathname.replace(/\//g, '-');
+
+            // Clean up any remaining special characters
+            pathname = pathname.replace(/[^a-zA-Z0-9\-_]/g, '-');
+
+            // Remove consecutive hyphens
+            pathname = pathname.replace(/-+/g, '-');
+
+            // Truncate if too long
+            return pathname.substring(0, 200);
+        } catch {
+            // Fallback for invalid URLs
+            return url.replace(/https?:\/\//, '').replace(/[^a-zA-Z0-9.\-_]/g, '_').substring(0, 200);
+        }
     }
 }

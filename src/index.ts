@@ -10,7 +10,7 @@ program
     .option('--start_url <url>', 'Start URL')
     .option('--run_mode <mode>', 'run mode (dry_run or full_run)')
     .option('--headless <boolean>', 'Headless mode')
-    .option('--resume', 'Resume from the last crawl')
+    .option('--resume [path]', 'Resume from the last crawl or specific path')
     .parse(process.argv);
 
 const options = program.opts();
@@ -35,29 +35,41 @@ async function main() {
         if (options.headless !== undefined) config.browser_config.headless = options.headless === 'true';
 
         // Handle Resume
+        // Handle Resume
         if (options.resume) {
-            const exportBase = path.resolve(process.cwd(), 'Export');
-            if (await fs.pathExists(exportBase)) {
-                const entries = await fs.readdir(exportBase);
-                const dirs = [];
-                for (const entry of entries) {
-                    const fullPath = path.join(exportBase, entry);
-                    if ((await fs.stat(fullPath)).isDirectory()) {
-                        dirs.push(entry);
-                    }
-                }
-                // Sort descending (alphanumeric works for YYYY-MM-DD_time)
-                dirs.sort().reverse();
-
-                if (dirs.length > 0) {
-                    const lastRun = path.join(exportBase, dirs[0]);
-                    console.log(`Auto-resume enabled. Found last run: ${dirs[0]}`);
-                    config.resume_from = lastRun;
+            if (typeof options.resume === 'string') {
+                const resumePath = path.resolve(process.cwd(), options.resume);
+                if (await fs.pathExists(resumePath)) {
+                    console.log(`Resuming from specified path: ${resumePath}`);
+                    config.resume_from = resumePath;
                 } else {
-                    console.warn('No previous runs found in Export/ to resume from.');
+                    console.error(`Specified resume path not found: ${resumePath}`);
+                    process.exit(1);
                 }
             } else {
-                console.warn('Export directory does not exist, cannot resume.');
+                const exportBase = path.resolve(process.cwd(), 'Export');
+                if (await fs.pathExists(exportBase)) {
+                    const entries = await fs.readdir(exportBase);
+                    const dirs = [];
+                    for (const entry of entries) {
+                        const fullPath = path.join(exportBase, entry);
+                        if ((await fs.stat(fullPath)).isDirectory()) {
+                            dirs.push(entry);
+                        }
+                    }
+                    // Sort descending (alphanumeric works for YYYY-MM-DD_time)
+                    dirs.sort().reverse();
+
+                    if (dirs.length > 0) {
+                        const lastRun = path.join(exportBase, dirs[0]);
+                        console.log(`Auto-resume enabled. Found last run: ${dirs[0]}`);
+                        config.resume_from = lastRun;
+                    } else {
+                        console.warn('No previous runs found in Export/ to resume from.');
+                    }
+                } else {
+                    console.warn('Export directory does not exist, cannot resume.');
+                }
             }
         }
 

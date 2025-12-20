@@ -126,6 +126,27 @@ export class Crawler {
         await this.cleanup();
     }
 
+    private getFileExtension(url: string): string | null {
+        try {
+            const parsedUrl = new URL(url);
+            const pathname = parsedUrl.pathname;
+            const match = pathname.match(/\.([a-zA-Z0-9]+)$/);
+            return match ? match[1].toLowerCase() : null;
+        } catch {
+            return null;
+        }
+    }
+
+    private isFileTypeAllowed(extension: string): boolean {
+        // 'web' means HTML pages (no extension or .html/.htm)
+        // Other extensions like 'pdf' are checked directly
+        if (this.config.file_types.includes('all')) return true;
+        if (extension === 'html' || extension === 'htm') {
+            return this.config.file_types.includes('web');
+        }
+        return this.config.file_types.includes(extension);
+    }
+
     private async processUrl(item: QueueItem) {
         if (!this.context) throw new Error('Browser context not initialized');
         const page = await this.context.newPage();
@@ -134,17 +155,32 @@ export class Crawler {
         console.log(`Processing [Depth ${depth}]: ${url}`);
 
         try {
+            // Detect file extension from URL
+            const urlExtension = this.getFileExtension(url);
+            const isWebPage = !urlExtension || urlExtension === 'html' || urlExtension === 'htm' || urlExtension === 'php' || urlExtension === 'aspx';
+
+            // Check if it's a binary file that we should download
+            if (urlExtension && !isWebPage && this.isFileTypeAllowed(urlExtension)) {
+                // Binary file download (PDF, etc.)
+                await this.downloadBinaryFile(url, urlExtension);
+                return;
+            }
+
+            // Check if web pages are allowed
+            if (isWebPage && !this.config.file_types.includes('web') && !this.config.file_types.includes('all')) {
+                console.log(`Skipping web page (not in file_types): ${url}`);
+                return;
+            }
+
             let isResumed = false;
 
             // Check if file already exists (Resume logic)
-            // We strip protocol/sanitize to find filename
             const filename = Utils.sanitizeFilename(url) + '.html';
             const filePath = path.join(this.exportDir, filename);
 
             if (this.config.resume_from && await fs.pathExists(filePath)) {
                 console.log(`[Resuming] File exists, skipping download: ${url}`);
                 const content = await fs.readFile(filePath, 'utf-8');
-                // Inject base href for "hydration" if needed, though mostly we just skip
                 const htmlWithBase = `<base href="${url}">\n` + content;
                 await page.setContent(htmlWithBase);
                 isResumed = true;
@@ -154,13 +190,30 @@ export class Crawler {
                 // Navigation with WAF/Bot bypass waiting
                 const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
+                // Check Content-Type header for binary files
+                const contentType = response?.headers()['content-type'] || '';
+                if (contentType.includes('application/pdf') && this.isFileTypeAllowed('pdf')) {
+                    // It's a PDF served without .pdf extension
+                    const body = await response?.body();
+                    if (body) {
+                        const pdfFilename = Utils.sanitizeFilename(url) + '.pdf';
+                        await Utils.saveFile(this.exportDir, pdfFilename, body);
+                        console.log(`Downloaded PDF: ${pdfFilename}`);
+                        this.summary.scraping_info.successfully_scraped++;
+                        this.summary.scraped_urls.push(url);
+                        await this.updateReport();
+                    }
+                    await page.close();
+                    return;
+                }
+
                 // Basic WAF checks
                 await page.waitForTimeout(1000);
 
                 // Check for specific challenge titles
                 const title = await page.title();
                 if (title.includes('Just a moment...') || title.includes('Challenge')) {
-                    console.log('Use detected WAF challenge. Waiting...');
+                    console.log('Detected WAF challenge. Waiting...');
                     await page.waitForLoadState('networkidle', { timeout: 30000 }).catch(() => { });
                 }
 
@@ -184,7 +237,7 @@ export class Crawler {
                     // Ignore
                 }
 
-                // Save HTML/File
+                // Save HTML
                 if (this.config.run_mode === 'full_run') {
                     const content = await page.content();
                     const filename = Utils.sanitizeFilename(url) + '.html';
@@ -198,27 +251,22 @@ export class Crawler {
                 this.summary.scraped_urls.push(url);
                 await this.updateReport();
             } else {
-                // If resumed, ensure it records in the final JSON if it was missing (e.g. crash before save)
                 if (!this.previousScraped.has(url)) {
                     this.summary.scraped_urls.push(url);
-                    // We don't increment successfully_scraped count for *this* run to avoid inflating stats, 
-                    // or we could counts it as "recovered". For now, we just ensure it's in the list.
                     await this.updateReport();
-                    // Also track it so we don't add it again if we encounter it multiple times (unlikely with visited set)
                     this.previousScraped.add(url);
                 }
             }
 
-            // Recurse
+            // Recurse - extract links for both web pages AND discovering file links
             if (depth < this.config.max_depth) {
                 const links = await page.evaluate(() => {
                     return Array.from(document.querySelectorAll('a[href]'))
                         .map(a => (a as HTMLAnchorElement).href)
-                        .filter(href => href.startsWith('http')); // Basic filter
+                        .filter(href => href.startsWith('http'));
                 });
 
                 for (const link of links) {
-                    // Normalize
                     const cleanLink = link.split('#')[0];
 
                     if (this.shouldCrawl(cleanLink)) {
@@ -236,6 +284,49 @@ export class Crawler {
             await this.updateReport();
         } finally {
             await page.close();
+        }
+    }
+
+    private async downloadBinaryFile(url: string, extension: string) {
+        console.log(`Downloading binary file [${extension}]: ${url}`);
+
+        try {
+            // Check for resume
+            const filename = Utils.sanitizeFilename(url) + '.' + extension;
+            const filePath = path.join(this.exportDir, filename);
+
+            if (this.config.resume_from && await fs.pathExists(filePath)) {
+                console.log(`[Resuming] File exists, skipping: ${url}`);
+                if (!this.previousScraped.has(url)) {
+                    this.summary.scraped_urls.push(url);
+                    this.previousScraped.add(url);
+                    await this.updateReport();
+                }
+                return;
+            }
+
+            // Use fetch-like approach with Playwright's request context
+            const response = await this.context!.request.get(url);
+
+            if (response.ok()) {
+                const body = await response.body();
+                await Utils.saveFile(this.exportDir, filename, body);
+                console.log(`Downloaded: ${filename}`);
+
+                this.summary.scraping_info.successfully_scraped++;
+                this.summary.scraped_urls.push(url);
+                await this.updateReport();
+            } else {
+                console.error(`Failed to download ${url}: HTTP ${response.status()}`);
+                this.summary.scraping_info.failed_urls++;
+                this.summary.scraping_info.failed_url_list.push(url);
+                await this.updateReport();
+            }
+        } catch (error: any) {
+            console.error(`Failed to download ${url}: ${error.message}`);
+            this.summary.scraping_info.failed_urls++;
+            this.summary.scraping_info.failed_url_list.push(url);
+            await this.updateReport();
         }
     }
 
