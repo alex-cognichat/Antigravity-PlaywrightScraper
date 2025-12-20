@@ -1,0 +1,24 @@
+{
+    "start_url": "https://support.heimdalsecurity.com/hc/en-us",
+    "max_depth": 2,
+    "file_types": [
+        "web",
+        "pdf"
+    ],
+    "blocked_paths": [
+        "/logout",
+        "/signin",
+        "/login",
+        "/blog"
+    ],
+    "allowed_external_domains": [],
+    "run_mode": "full_run",
+    "browser_config": {
+        "headless": true,
+        "browser_type": "chromium",
+        "viewport": {
+            "width": 1920,
+            "height": 1080
+        }
+    }
+}
