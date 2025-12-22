@@ -26,7 +26,7 @@ async function main() {
         } else {
             console.warn(`Config file not found at ${configPath}, using defaults/CLI args only.`);
             // @ts-ignore
-            config = { browser_config: { headless: true, browser_type: 'chromium', viewport: { width: 1920, height: 1080 } }, blocked_paths: [], allowed_external_domains: [], file_types: ['web'] };
+            config = { browser_config: { headless: true, browser_type: 'chromium', viewport: { width: 1920, height: 1080 } }, blocked_paths: [], blocked_hosts: [], allowed_external_domains: [], file_types: ['web'] };
         }
 
         // Override with CLI args

@@ -9,6 +9,7 @@ export interface CrawlerConfig {
     max_depth: number;
     file_types: string[];
     blocked_paths: string[];
+    blocked_hosts: string[];
     allowed_external_domains: string[];
     run_mode: 'dry_run' | 'full_run';
     browser_config: {
@@ -336,15 +337,31 @@ export class Crawler {
         // blocked paths
         if (this.config.blocked_paths.some(path => url.includes(path))) return false;
 
-        // Domain check
-        const rootDomain = Utils.getRootDomain(this.config.start_url);
+        // blocked hosts - check exact hostname match
+        try {
+            const urlHost = new URL(url).hostname;
+            if (this.config.blocked_hosts?.some(blockedHost => urlHost === blockedHost)) {
+                return false;
+            }
+        } catch {
+            // Invalid URL, skip host check
+        }
+
+        // Hostname check - only crawl URLs on the same hostname as start_url
+        try {
+            const startHostname = new URL(this.config.start_url).hostname;
+            const linkHostname = new URL(url).hostname;
+
+            // Exact hostname match - this ensures we only crawl on support.heimdalsecurity.com
+            // and not dashboard.heimdalsecurity.com or other subdomains
+            if (linkHostname === startHostname) return true;
+        } catch {
+            // Invalid URL
+        }
+
+        // Check external allowed domains (by root domain)
         const linkDomain = Utils.getRootDomain(url);
-
-        if (linkDomain === rootDomain) return true;
-
-        // Check external allowed
-        if (this.config.allowed_external_domains.includes(linkDomain || '')) return false; // Allowed internals logic is separate in spec, typically we crawl internal, but might allow download external. 
-        // For this simplified logic, we only crawl internal.
+        if (this.config.allowed_external_domains.includes(linkDomain || '')) return false;
 
         return false;
     }

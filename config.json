@@ -1,15 +1,21 @@
 {
-    "start_url": "https://heimdalsecurity.com/enterprise-security/products/privileged-access-management",
-    "max_depth": 3,
+    "start_url": "https://support.heimdalsecurity.com/hc/en-us",
+    "max_depth": 5,
     "file_types": [
         "web",
-        "pdf"
+        "pdf",
+        "doc",
+        "docx"
     ],
     "blocked_paths": [
         "/logout",
         "/signin",
         "/login",
         "/blog"
+    ],
+    "blocked_hosts": [
+        "heimdalsecurity.com",
+        "www.heimdalsecurity.com"
     ],
     "allowed_external_domains": [],
     "run_mode": "full_run",
